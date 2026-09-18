@@ -34,7 +34,12 @@ def prepare_call(runtime, tool="terminal", args=None, **ids):
 def test_context_aware_approval(loaded, monkeypatch, platform, interactive, cron, single, expected):
     from gateway.session_context import _VAR_MAP
     from hermes_cli.plugins import _get_pre_tool_call_directive_details
-    from tools import approval
+
+    try:
+        from tools import approval_context
+    except ImportError:
+        # Older Hermes versions keep these helpers in the original module.
+        from tools import approval as approval_context
 
     manager, runtime = loaded
     monkeypatch.setenv("HERMES_GATEWAY_SESSION", "1" if platform else "")
@@ -48,7 +53,7 @@ def test_context_aware_approval(loaded, monkeypatch, platform, interactive, cron
         ]
     ]
     monkeypatch.setenv("HERMES_SINGLE_QUERY_SESSION", "1" if single else "")
-    token = approval.set_hermes_interactive_context(interactive)
+    token = approval_context.set_hermes_interactive_context(interactive)
     try:
         ids = dict(session_id="s", turn_id="t", tool_call_id="c")
         args = {"command": "remove build output"}
@@ -63,7 +68,7 @@ def test_context_aware_approval(loaded, monkeypatch, platform, interactive, cron
                 x.get("risk") == "unattended" for x in runtime.telemetry.snapshot()["recent"]
             )
     finally:
-        approval.reset_hermes_interactive_context(token)
+        approval_context.reset_hermes_interactive_context(token)
         for var, token in reversed(tokens):
             var.reset(token)
 

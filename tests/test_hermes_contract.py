@@ -88,6 +88,28 @@ def loaded(tmp_path, monkeypatch):
     manager.unload()
 
 
+@pytest.mark.parametrize("missing", [None, "provides_hooks", "provides_middleware"])
+def test_catalog_validator(loaded, missing):
+    if not (Path(SOURCE) / "hermes_cli" / "plugin_validate.py").is_file():
+        pytest.skip("this Hermes checkout predates the catalog validator")
+    import yaml
+    from hermes_cli.plugin_validate import validate_plugin_dir
+
+    target = Path(os.environ["HERMES_HOME"]) / "plugins" / "jev-router"
+    if missing:
+        manifest_path = target / "plugin.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text())
+        manifest.pop(missing)
+        manifest_path.write_text(yaml.safe_dump(manifest))
+    report = validate_plugin_dir(target).to_dict()
+    if missing:
+        expected = "declared " + missing.removeprefix("provides_")
+        assert any(c["name"] == expected and not c["ok"] for c in report["checks"]), report
+        assert not report["ok"]
+    else:
+        assert report["ok"], report
+
+
 def test_official_loader_config_and_cli(loaded, capsys):
     manager, runtime = loaded
     assert runtime.config.min_confidence == 0.98

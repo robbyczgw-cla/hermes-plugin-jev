@@ -3,7 +3,11 @@ version: "0.1.0"
 description: "TypeSafe/Jev turn classification, conservative tool shaping, semantic approval signals, and coding verification."
 python_dependencies:
   - "typesafe-sdk>=0.6.0,<0.7"
-hooks:
+provides_tools: []
+provides_middleware:
+  - llm_request
+  - tool_request
+provides_hooks:
   - pre_llm_call
   - pre_tool_call
   - post_tool_call

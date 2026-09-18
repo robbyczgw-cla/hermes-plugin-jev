@@ -28,19 +28,21 @@ Bounded (session_id, turn_id) cache
 
 ## Install
 
-Requires Python 3.11+ and a Hermes checkout exposing `PluginContext.register_hook`, `register_middleware`, `get_config`, `iter_hook_callbacks`, and the hooks below. Tested against Hermes commit `4e06e5f38a`; older releases may lack these contracts. No Hermes core changes are required.
+Requires Python 3.11+ and a Hermes checkout exposing `PluginContext.register_hook`, `register_middleware`, `get_config`, `iter_hook_callbacks`, and the hooks below. Tested against Hermes commits `4e06e5f38a` and `77ecc72bcdd5da0163cca21c8af0e95b26ba3426`; older releases may lack these contracts. No Hermes core changes are required.
 
 ```bash
 hermes plugins install robbyczgw-cla/hermes-plugin-jev --no-enable
 ```
 
-Install the official SDK **using the Python interpreter that runs Hermes**. For example, after activating the Hermes virtual environment:
+Hermes versions with automatic plugin dependency installation install the declared SDK during plugin installation or enablement. This includes the tested upstream commit `77ecc72bcdd5da0163cca21c8af0e95b26ba3426`.
+
+On older versions such as the tested `4e06e5f38a`, or when installing with `--no-deps` on versions that support it, install the official SDK **using the Python interpreter that runs Hermes**. For example, after activating the Hermes virtual environment:
 
 ```bash
 python -m pip install 'typesafe-sdk>=0.6.0,<0.7'
 ```
 
-Hermes does not automatically install a plugin's declared Python dependencies. A missing SDK leaves this plugin inactive, not Hermes broken.
+A missing SDK leaves this plugin inactive, not Hermes broken. Check dependency-installation warnings before enabling it.
 
 Set `TYPESAFE_API_KEY` using your secret manager or Hermes's protected environment file (`~/.hermes/.env`, mode `0600`). Do not commit it or paste it into command arguments. Obtain an API key from [TypeSafe AI](https://typesafe.ai).
 
@@ -167,8 +169,16 @@ Unit tests use a fake DecisionEngine. SDK contract tests use the real official S
 Run the official Hermes loader/config/middleware/approval contracts in an isolated temporary Hermes home, using Hermes's Python environment:
 
 ```bash
-HERMES_SOURCE=/path/to/hermes /path/to/hermes/venv/bin/python -m pytest tests/test_hermes_contract.py -q
+HERMES_SOURCE=/path/to/hermes /path/to/hermes/venv/bin/python -m pytest tests/test_hermes_contract.py tests/test_hermes_review_contract.py -q -W error
 ```
+
+On Hermes versions exposing the catalog validator, also check the directory plugin before submitting a catalog pin:
+
+```bash
+hermes plugins validate /path/to/hermes-plugin-jev
+```
+
+The manifest declares all registered hooks and middleware through `provides_hooks` and `provides_middleware`, with `provides_tools: []`. Ordinary CI checks these declarations against registration; the Hermes contract suite checks the real validator when the selected checkout provides it. Use an isolated upstream checkout for compatibility checks rather than updating a running gateway.
 
 Also run the affected upstream tests from the Hermes checkout:
 

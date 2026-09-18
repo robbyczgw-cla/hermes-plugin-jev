@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Declare hooks and middleware for current Hermes catalog validation; check declarations against plugin registration.
+- Document automatic SDK installation on newer Hermes versions and the manual path on older versions.
+- Use the current approval-context test imports with a fallback for older Hermes, and test catalog validation when available.
+
 - Refresh environment-secret redaction after startup and replace overlapping known secrets longest-first.
 - Document transmitted data, local/provider retention boundaries, dependency licenses, and hosted-service terms.
 
