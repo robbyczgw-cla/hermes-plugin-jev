@@ -1,0 +1,12 @@
+name: jev-router
+version: "0.1.0"
+description: "TypeSafe/Jev turn classification, conservative tool shaping, semantic approval signals, and coding verification."
+python_dependencies:
+  - "typesafe-sdk>=0.6.0,<0.7"
+hooks:
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - pre_verify
+  - post_llm_call
+  - on_session_end
