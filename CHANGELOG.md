@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a pinned preview quickstart, a separate technical reference, and executable checks for documentation links, configuration, and packaged docs.
+
 - Bound aggregate sanitization work, discard completion decisions after lifecycle end, and preserve tools on an explicit resumed-turn signal.
 - Narrow the follow-up approval guard so ordinary imperatives containing “this” or “it” do not force approval; retain conservative treatment of standalone references.
 - Expand verification output excerpts to 1,800 characters without allowing incomplete evidence to trigger a nudge.

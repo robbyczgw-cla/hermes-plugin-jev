@@ -10,3 +10,4 @@ include CHANGELOG.md
 recursive-include tests *.py
 recursive-include scripts *.py
 recursive-include examples *.yaml
+recursive-include docs *.md
