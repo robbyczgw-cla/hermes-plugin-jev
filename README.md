@@ -2,7 +2,7 @@
 
 `hermes-plugin-jev` connects Hermes Agent to Jev, TypeSafe AI's System One decision model, for a small set of structured judgments about each turn. Hermes keeps planning, calling tools, running its own guardrails, and asking humans for approval. Jev only adds signals.
 
-**V0 preview/beta — start in shadow mode.** Risk enforcement, verification, and tool shaping are experimental. The repository is currently private; installation requires authenticated GitHub access.
+**0.1.0 preview/beta — start in shadow mode.** Risk enforcement, verification, and tool shaping are experimental. The repository is currently private; installation requires authenticated GitHub access.
 
 Enabling this plugin sends bounded user text and selected tool arguments to TypeSafe's hosted API. Read [PRIVACY.md](PRIVACY.md) before you enable it. Plugin code is [MIT](LICENSE); the SDK and hosted service have [separate terms](THIRD_PARTY.md).
 
@@ -36,14 +36,16 @@ No Hermes core changes or patches are needed.
 
 ### 1. Install, disabled, at the pinned commit
 
-The reviewed preview runtime is on `hardening/controlled-live`, not `main`. Install the immutable commit below. `hermes plugins install --ref` requires a full 40-character SHA, not a branch name:
+The reviewed preview runtime is available from `main`. Install the immutable runtime commit below. `hermes plugins install --ref` requires a full 40-character SHA, not a branch name:
 
 ```bash
 hermes plugins install robbyczgw-cla/hermes-plugin-jev \
-  --ref 8e69d748d70ea4c1a9225c0efd30a6e4cacbf4a4 --no-enable
+  --ref 7a2044364dbe502993400996f640e067196615fb --no-enable
 ```
 
-Keep the pin for this preview so the installer selects the reviewed runtime rather than the older default branch.
+The distribution and plugin manifest both use `0.1.0`; the maturity label is preview/beta, not a stable-release claim. Keep the commit pin for reproducible installs. The current `main` may contain later documentation changes without changing this runtime.
+
+Hermes can flag this non-catalog plugin as `CAUTION` and block unattended installation. Review the named files before proceeding; this preview includes synthetic credential-redaction fixtures, SDK/API access, and subprocess-based test runners. A scanner finding is not permission to ignore the scan, and `--no-enable` does not bypass it. Do not disable scanning to make installation pass.
 
 Recent Hermes builds install the declared SDK automatically. Older builds, or installs with `--no-deps`, need it installed into the interpreter that runs Hermes:
 
@@ -103,6 +105,8 @@ hermes plugins disable jev-router
 Then start a new Hermes process, or use a controlled gateway restart. Already running processes keep their loaded plugin until they exit.
 
 Names: plugin ID `jev-router`, Python package `jev_router`, distribution `hermes-plugin-jev`. The SDK and environment variable keep their TypeSafe names.
+
+For a bounded trial without changing your existing profile, follow the [shadow-trial checklist](docs/shadow-trial.md). It separates live API checks from synthetic guard tests and records abstentions as well as signals.
 
 ## Configuration and rollout
 

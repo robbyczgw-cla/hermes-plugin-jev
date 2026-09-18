@@ -27,7 +27,7 @@ include = ["jev_router*"]
 
 [tool.setuptools.data-files]
 "share/doc/hermes-plugin-jev" = ["PRIVACY.md", "THIRD_PARTY.md", "SECURITY.md", "CHANGELOG.md"]
-"share/doc/hermes-plugin-jev/docs" = ["docs/reference.md"]
+"share/doc/hermes-plugin-jev/docs" = ["docs/reference.md", "docs/shadow-trial.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

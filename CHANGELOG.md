@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bring the reviewed preview onto `main`, align the quickstart with the `0.1.0` package/manifest identity, and add a bounded shadow-trial checklist.
+
 - Add a pinned preview quickstart, a separate technical reference, and executable checks for documentation links, configuration, and packaged docs.
 
 - Bound aggregate sanitization work, discard completion decisions after lifecycle end, and preserve tools on an explicit resumed-turn signal.

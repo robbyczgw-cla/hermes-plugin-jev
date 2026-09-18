@@ -14,6 +14,7 @@ from jev_router.config import Config
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = [ROOT / "README.md", ROOT / "docs" / "reference.md"]
+LINK_DOCS = [*DOCS, ROOT / "docs" / "shadow-trial.md"]
 
 
 def flatten(values, prefix=""):
@@ -53,7 +54,7 @@ def test_documented_configs_load_with_shadow_defaults(path):
         assert config.block_unbindable is False
 
 
-@pytest.mark.parametrize("path", DOCS, ids=["readme", "reference"])
+@pytest.mark.parametrize("path", LINK_DOCS, ids=["readme", "reference", "shadow-trial"])
 def test_documentation_local_links_and_anchors_resolve(path):
     text = path.read_text()
     links = re.findall(r"\[[^\]]*\]\(([^)]+)\)", text)
@@ -78,6 +79,7 @@ def test_reference_in_source_and_wheel_manifest():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     data = project["tool"]["setuptools"]["data-files"]
     assert "docs/reference.md" in data["share/doc/hermes-plugin-jev/docs"]
+    assert "docs/shadow-trial.md" in data["share/doc/hermes-plugin-jev/docs"]
 
 
 def test_preview_install_is_pinned_and_never_enables_implicitly():
@@ -92,3 +94,14 @@ def test_preview_install_is_pinned_and_never_enables_implicitly():
         assert "--no-enable" in command
     assert "hermes jev status" in text
     assert "jev-router status" not in text
+
+
+def test_preview_identity_and_default_branch_guidance_match_metadata():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text())
+    assert project["project"]["version"] == manifest["version"]
+    text = (ROOT / "README.md").read_text()
+    assert f"**{manifest['version']} preview/beta" in text
+    assert "not `main`" not in text
+    assert "older default branch" not in text
+    assert "docs/shadow-trial.md" in text
