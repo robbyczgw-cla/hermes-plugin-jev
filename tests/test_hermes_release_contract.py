@@ -13,7 +13,11 @@ pytestmark = pytest.mark.skipif(not SOURCE, reason="set HERMES_SOURCE for host c
 @pytest.mark.parametrize("first", [True, False])
 @pytest.mark.parametrize("injected", [True, False])
 def test_host_turn_context_and_provider_message_guard(loaded, first, injected):
-    from agent.turn_context import _collect_pre_llm_call_context
+    try:
+        from agent.turn_context import _collect_pre_llm_call_context
+    except ImportError:
+        # Older Hermes keeps this code inline. The pinned gate rejects skips.
+        pytest.skip("this Hermes checkout predates the extracted turn-context helper")
     from hermes_cli.middleware import apply_llm_request_middleware
 
     manager, runtime = loaded

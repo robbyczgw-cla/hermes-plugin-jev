@@ -4,6 +4,8 @@ Use Jev, TypeSafe AI's System One model, for small structured decisions around H
 
 This plugin classifies each user turn and can request semantic risk approvals, check coding completion claims, and narrow tool definitions. It starts in **shadow mode**: decisions are computed but cannot change tools, approval behavior, or completion. Verification and tool shaping are off by default. It does **not** route providers or replace the agent model.
 
+**Release scope:** preview/beta, with shadow defaults. Risk enforcement, verification, and tool shaping are experimental opt-ins, not a general authorization boundary. Long or incomplete prompts can cause repeated approval requests in enforce mode and suppress verification nudges; evaluate those paths on your workloads before enabling them.
+
 **Before enabling:** this plugin sends selected task text to TypeSafe's hosted API. Read [Privacy and data flow](PRIVACY.md). Plugin code is [MIT-licensed](LICENSE); [SDK licenses and hosted-service terms](THIRD_PARTY.md) are separate.
 
 ## Architecture
