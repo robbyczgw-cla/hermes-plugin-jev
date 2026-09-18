@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Default to shadow mode; keep tool shaping and verification opt-in, with staged rollout guidance. Existing configs must explicitly select `mode: enforce` to retain intervention.
+- Preserve tools for follow-ups, prior/ongoing workflows, unknown provider history, and incomplete decision input; limit shaping to verified fresh greetings.
+- Carry bounded truncation/redaction metadata through the SDK; require human review for incomplete risk inputs and suppress incomplete verification nudges.
+- Deny attended enforce-mode actions that cannot be bound to an exact argument digest. Use non-reusable approval rules for incomplete/ambiguous inputs; never grant execution permission.
+- Add mandatory pinned-Hermes integration CI with a no-skips gate and offline disabled/shadow/risk-only/enforce regression metrics.
+
 - Declare hooks and middleware for current Hermes catalog validation; check declarations against plugin registration.
 - Document automatic SDK installation on newer Hermes versions and the manual path on older versions.
 - Use the current approval-context test imports with a fallback for older Hermes, and test catalog validation when available.

@@ -8,3 +8,5 @@ include PRIVACY.md
 include THIRD_PARTY.md
 include CHANGELOG.md
 recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include examples *.yaml

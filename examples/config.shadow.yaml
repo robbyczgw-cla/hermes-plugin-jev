@@ -1,0 +1,32 @@
+# Merge into the existing Hermes config; this does not replace other settings.
+# Shadow is observational, not offline: enabled stages still call TypeSafe.
+plugins:
+  enabled:
+    - jev-router
+  entries:
+    jev-router:
+      settings:
+        enabled: true
+        mode: shadow
+        decision_model: jev-latest
+        timeout_seconds: 2.0
+        max_workers: 4
+        state_max_bytes: 8000
+        turn_classifier:
+          enabled: true
+        risk_gate:
+          enabled: true
+          approval_threshold: 0.80
+        verify:
+          enabled: false
+          continue_threshold: 0.85
+          max_nudges: 2
+        tool_shaping:
+          enabled: false
+          min_confidence: 0.95
+        telemetry:
+          enabled: true
+          max_events: 128
+# Rollout: observe -> mode: enforce (risk only) -> optional verify -> shaping last.
+# To observe verification/shaping, enable their flags but retain mode: shadow.
+# A new Hermes process is needed after changing settings.

@@ -2,7 +2,7 @@
 
 Use Jev, TypeSafe AI's System One model, for small structured decisions around Hermes Agent. Hermes still plans, reasons, calls tools, runs its guardrails, and requests human approval.
 
-This plugin classifies each user turn, conservatively narrows tool definitions, adds semantic approval requests, and checks coding completion claims against bounded verification evidence. It does **not** route providers or replace the agent model.
+This plugin classifies each user turn and can request semantic risk approvals, check coding completion claims, and narrow tool definitions. It starts in **shadow mode**: decisions are computed but cannot change tools, approval behavior, or completion. Verification and tool shaping are off by default. It does **not** route providers or replace the agent model.
 
 **Before enabling:** this plugin sends selected task text to TypeSafe's hosted API. Read [Privacy and data flow](PRIVACY.md). Plugin code is [MIT-licensed](LICENSE); [SDK licenses and hosted-service terms](THIRD_PARTY.md) are separate.
 
@@ -73,6 +73,7 @@ plugins:
     jev-router:
       settings:
         enabled: true
+        mode: shadow
         decision_model: jev-latest
         timeout_seconds: 2.0
         max_workers: 4
@@ -80,13 +81,13 @@ plugins:
         turn_classifier:
           enabled: true
         tool_shaping:
-          enabled: true
+          enabled: false
           min_confidence: 0.95
         risk_gate:
           enabled: true
           approval_threshold: 0.80
         verify:
-          enabled: true
+          enabled: false
           continue_threshold: 0.85
           max_nudges: 2
         cache:
@@ -96,6 +97,15 @@ plugins:
           enabled: true
           max_events: 128
 ```
+
+### Recommended rollout
+
+1. **Shadow:** start with the settings above (`mode: shadow`). Eligible enabled stages compute and log decisions; no tool removal, human-approval proposal, deterministic Jev block, or verification continuation can reach Hermes. This still sends data to TypeSafe and adds bounded latency. Enable `verify` or `tool_shaping` while staying in shadow only to observe those stages.
+2. **Risk only:** after reviewing representative shadow runs, set `mode: enforce`, keep `risk_gate.enabled: true`, and leave `tool_shaping.enabled` and `verify.enabled` false. Hermes remains the authority for execution.
+3. **Optional verification:** enable `verify` after checking false-nudge rates. Incomplete completion input never produces a nudge.
+4. **Tool shaping last:** enable it only after workload evaluation shows no false tool removals. The first release deliberately supports a narrow fresh-greeting case, not general conversational tool prediction.
+
+`mode` accepts only `shadow` or `enforce`. Invalid values disable the plugin. Existing installations without a mode setting now become shadow-only; explicitly choose `enforce` to retain behavioral intervention. The [example configuration](examples/config.shadow.yaml) is a merge snippet, not a replacement for your Hermes config. No gateway changes happen automatically.
 
 `decision_model` selects only the Jev decision model, not the Hermes agent model. The bare key `model` is reserved by Hermes's configuration API and is not used here.
 
@@ -109,13 +119,15 @@ Invalid configuration disables this plugin and logs a fixed warning. Confidence 
 
 One System One request contains three `Choice` questions (`intent`, `complexity`, `side_effect_likelihood`) and five `Noul` yes/no probabilities (`needs_web`, `needs_browser`, `needs_terminal`, `needs_files`, `should_delegate`). Intent choices are chat, coding, research, system administration, automation, data analysis, file work, and other.
 
-The state contains the current user message, platform, and agent model. It never includes the conversation history. Choice confidence is the minimum of the three Choice confidences. Probabilities are model estimates, not calibrated guarantees.
+The state contains the current user message, platform, agent model, and boolean context summaries (prior cached turn, unresolved turn, observed tool workflow). It does not upload conversation history. The shaping guard separately inspects the local provider-request history; missing or ambiguous history preserves every tool. Choice confidence is the minimum of the three Choice confidences. Probabilities are model estimates, not calibrated guarantees.
 
 A lock-protected bounded cache uses `(session_id, turn_id)`. Concurrent duplicate classification hooks share one in-flight request; failures are cached too. Classification is never called by `llm_request`. Without a turn ID, a legacy `pre_llm_call` creates a local turn ID; this fallback relies on that hook firing once per turn. Missing session IDs disable behavior. Session-only consumers abstain when more than one unfinished turn exists. Entries expire by TTL, completed entries make room first, and session end clears the session.
 
 ### Tool shaping
 
-V0 only narrows **very high-confidence trivial/simple chat**, not arbitrary intent labels. The intent, complexity, side-effect class, and every capability probability must agree. It runs only for the first provider request (`api_call_count == 1`) and before any observed tool call. Later requests get the original tool set.
+Tool shaping is opt-in and only applies in `mode: enforce`. A deterministic guard first requires complete input, a recognized standalone greeting, no cached prior turn, and a complete provider request containing exactly the matching user message (plus optional system/developer messages). History, tool/function events, follow-up references, confirmations such as “yes, do it”, unknown message formats, mismatched content, or provider-side conversation state preserve all tools. Cached prior turns remain conservative even when marked complete; expiry cannot bypass the separate provider-history check.
+
+Only then may a **very high-confidence trivial/simple-chat** decision narrow tools. Intent, complexity, side effects, and every capability probability must agree. It runs only for the first provider request (`api_call_count == 1`) and before any observed tool call. Later requests get the original tool set. This restriction trades away most shaping opportunities rather than guessing task resolution from a short follow-up.
 
 The pure `shape_tools` function supports OpenAI Chat Completions and Responses function definitions. It returns a new outer request and tool list without modifying the input. Unknown or mixed schemas, built-in provider tools, forced/required tool choices, duplicate names, low confidence, or an empty surviving tool set produce no change. Clarification, task tracking, meta tools, and unknown tools stay available. The middleware cannot add a tool or execute one.
 
@@ -127,13 +139,15 @@ The middleware does not change arguments. It prepares a single-use proposal boun
 
 Cron, single-query (`-q`), API-server/webhook sessions, and bare noninteractive scripts do not get Jev approval requests. The plugin uses Hermes's context-local approval predicates, checks again before emission, and abstains if those host APIs are unavailable. Unattended skips record metadata-only telemetry. This does not change Hermes's own cron/unattended approval settings or deterministic guards.
 
-Python combines those signals. Significant risk or semantic uncertainty can return an `approve` directive. This is a **request for human approval**, not an approval grant. The plugin never returns `allow`, edits tool arguments, executes a tool, or modifies Hermes's policy configuration. Approval messages name the risk dimensions and show a bounded, sanitized action summary. Explicit `rule_key` values separate tool, risk dimensions, and the sanitized action digest, instead of creating a tool-wide permanent allowlist entry. Redacted or truncated differences are not distinct approval rules; these keys do not replace deterministic scope checks.
+Python combines those signals. In enforce mode, significant risk, semantic uncertainty, incomplete decision input, or a recognized context-dependent follow-up can request human approval. References such as “continue”, “fix that”, or “run the tests too” do not establish action scope on their own. This local reference guard is intentionally coarse and can cause extra approval prompts; it is not a complete language-understanding layer. Incomplete input cannot be made safe by a low-risk Jev answer, and still requests approval if the semantic request fails. Known ambiguous follow-ups receive the same conservative treatment. This uses an `approve` directive. This is a **request for human approval**, not an approval grant. The plugin never returns `allow`, edits tool arguments, executes a tool, or modifies Hermes's policy configuration. Approval messages name the risk dimensions and show a bounded, sanitized action summary. Explicit `rule_key` values separate tool, risk dimensions, and the sanitized action digest, instead of creating a tool-wide permanent allowlist entry. Incomplete or ambiguous inputs use a fresh one-off rule key rather than an excerpt-based reusable key, so a remembered approval cannot cover a different hidden tail. The prompt asks the user to inspect the full original call, deny if unavailable, and not use “Always” for that request. These keys do not replace deterministic scope checks.
 
 **Current Hermes arbitration constraint:** the first `block` or `approve` hook result wins. This plugin emits `approve` only when its hook is last in Hermes's public callback snapshot. If another hook follows it, Jev abstains rather than shadowing a later block. Earlier block hooks continue to win. Register deterministic policy hooks before this plugin when semantic approvals are wanted. This check is conservative; a later observer also disables Jev approval requests. Hermes plugin registration is expected to remain stable while a turn runs.
 
+For arguments that cannot be safely digested (including the 64 KiB digest limit), the middleware prepares only a deny proposal. The policy hook may return `block` and ask the user to reduce the action scope. No permissive directive is created for an unbound action. Shadow mode creates neither approval nor block proposals.
+
 ### Coding verification
 
-Only Hermes-provided nonempty `changed_paths` enables the check. `post_tool_call` retains at most eight short verification observations: tool, sanitized command, explicit exit status, and a bounded output excerpt. Compound/background shell commands, collection-only runs, and help/version/dry-run invocations do not count as successful verification. Observed mutations invalidate earlier records.
+Verification is off by default. When enabled, only Hermes-provided nonempty `changed_paths` enables the check. `post_tool_call` retains at most eight short verification observations: tool, sanitized command, explicit exit status, and a bounded output excerpt. Compound/background shell commands, collection-only runs, and help/version/dry-run invocations do not count as successful verification. Observed mutations invalidate earlier records.
 
 Hermes can skip observer hooks, so a missing mutation event cannot prove that an earlier pass is still current. All retained evidence is labelled `freshness: unverified`; historical passes become `observed_success: true`, not current `success: true`. They cannot deterministically suppress a continuation. Jev still needs strong inconsistency and unfinished-work signals to nudge; unknown freshness alone does not trigger another iteration. This conservative policy can cause an extra check after genuinely successful tests.
 
@@ -143,11 +157,13 @@ Four Noul questions assess the completion claim, verification evidence, inconsis
 
 **TypeSafe/Jev decisions are probabilistic semantic signals. They do not replace deterministic authorization or Hermes guardrails.**
 
-Missing credentials/SDK, SDK exceptions, malformed responses, insufficient confidence, timeouts, exhausted worker capacity, unknown payloads, and plugin hook errors leave normal Hermes behavior in place. Existing deterministic blocks remain unchanged. SDK retries are disabled. Daemon workers enforce a caller deadline and have no unbounded queue; a timed-out network request may continue in its worker until transport timeout, but cannot apply a late decision.
+Missing credentials/SDK, insufficient confidence, timeouts, malformed responses, and exhausted workers normally leave Hermes behavior in place. There is one conservative exception in the attended enforce-mode risk gate: incomplete input or a recognized ambiguous follow-up requests human approval even when the semantic call fails; unbindable arguments prepare a deny proposal. Unknown shaping payloads and incomplete verification input always abstain. Unexpected plugin-hook errors fall back to Hermes. Existing deterministic blocks remain unchanged. SDK retries are disabled. Daemon workers enforce a caller deadline and have no unbounded queue; a timed-out network request may continue in its worker until transport timeout, but cannot apply a late decision.
 
 Enabling this plugin sends bounded user/task text and selected tool arguments to TypeSafe's hosted API. Consider your data policy before enabling it. The sanitizer removes the configured key, obvious credential fields, bearer/basic credentials, credential-shaped strings, private keys, and URL credentials **before** truncation. It limits depth, fields, string length, and total serialized bytes. Known environment secrets are refreshed for each sanitization, including credentials set after startup. See [PRIVACY.md](PRIVACY.md) for exact data fields, retention limits, and endpoint overrides. Sanitization is best-effort secret minimization, **not** a DLP guarantee; private facts may remain. Disable the plugin for data that must not leave the machine.
 
-SDK wire logs are suppressed only in this plugin's request context, even with SDK DEBUG logging enabled. Telemetry never contains conversations, tool output, arguments, secret values, or exception messages. Logs expose only bounded decision metadata, fallback categories, latency, model ID, and token usage.
+Decision states carry `input_metadata`: `input_complete`, `truncated`, `truncated_fields`, a redaction flag, and original/processed string lengths where available. Depth, field-count, list, string, and byte-budget loss all mark input incomplete. Paths use fixed schema names or numeric positions, not arbitrary user keys. Metadata is included in the byte budget, survives repeated sanitization, and reaches the SDK. No shaping or verification intervention is allowed on incomplete input.
+
+SDK wire logs are suppressed only in this plugin's request context, even with SDK DEBUG logging enabled. Telemetry never contains conversations, tool output, arguments, secret values, or exception messages. Logs expose only bounded decision metadata, fallback categories, latency, model ID, and token usage. Shadow telemetry distinguishes predicted actions (`would_shape`, `would_approve`, `would_nudge`) from actions applied to Hermes, and records mode and completeness flags.
 
 `hermes jev status` reports settings, key presence (never value), active state, and process-local telemetry. A separate CLI process cannot report the gateway's in-memory counters. Logs are emitted under `hermes.plugins.jev_router`; in-memory events are bounded by `telemetry.max_events`.
 
@@ -169,8 +185,20 @@ Unit tests use a fake DecisionEngine. SDK contract tests use the real official S
 Run the official Hermes loader/config/middleware/approval contracts in an isolated temporary Hermes home, using Hermes's Python environment:
 
 ```bash
-HERMES_SOURCE=/path/to/hermes /path/to/hermes/venv/bin/python -m pytest tests/test_hermes_contract.py tests/test_hermes_review_contract.py -q -W error
+HERMES_SOURCE=/path/to/hermes /path/to/hermes/venv/bin/python -m pytest tests/test_hermes*_contract.py -q -W error
 ```
+
+The dedicated CI job checks out Hermes at `77ecc72bcdd5da0163cca21c8af0e95b26ba3426`, installs its dependencies, and runs every `test_hermes*.py` contract with a fake DecisionEngine. `scripts/run_hermes_integration.py` rejects a missing checkout, a different SHA, an empty report, or any skipped/failed contract. It removes live-test opt-ins and the TypeSafe key from the test environment. Local unit runs can still skip Hermes contracts when no checkout is supplied; the dedicated job cannot.
+
+Run the deterministic evaluation matrix without credentials:
+
+```bash
+python scripts/evaluate.py --output /tmp/jev-eval.json
+```
+
+It compares disabled, shadow, risk-only, and enforce profiles. Cases include short follow-ups, cached coding work, actionable prompt tails, long tool arguments, fresh chat, risky/read-only actions, native blocks before and after Jev, and valid/inconsistent/truncated completion claims. Reports include false tool removals, unnecessary/missed approval requests, incorrect/missed verification nudges, lost native blocks, behavior differences, engine-call counts, and measured local overhead. Expectations are profile-specific: disabled/shadow are supposed to emit no directives. Timings use a fake engine, not the TypeSafe service. This suite checks plugin guards; it does not establish Jev accuracy or production latency.
+
+Before claiming stable readiness, collect opt-in shadow observations on representative Hermes workflows, review false actions, test real approval delivery on the intended host, and confirm acceptable service latency. Passing synthetic tests is not that evidence.
 
 On Hermes versions exposing the catalog validator, also check the directory plugin before submitting a catalog pin:
 

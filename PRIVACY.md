@@ -8,8 +8,8 @@ The plugin uses the official `typesafe-sdk`. Its default endpoint is `https://ap
 
 Each request includes a Jev model ID, fixed decision questions, and a bounded state object:
 
-- **Turn classification:** current user message, platform name, and Hermes agent-model identifier.
-- **Tool-risk assessment:** current user message, tool name, selected tool arguments, platform, and classified intent. Shell commands, API payloads, filenames, or code can occur inside those arguments. Read-only bypasses and unattended contexts skip this risk request, not all plugin requests.
+- **Turn classification:** current user message, platform name, Hermes agent-model identifier, and boolean summaries of cached prior turns, unresolved turns, and observed tool workflows. Full history is inspected only by the local shaping guard, not sent to Jev.
+- **Tool-risk assessment:** current user message, tool name, selected tool arguments, platform, classified intent, and a boolean ambiguous-follow-up flag. Shell commands, API payloads, filenames, or code can occur inside those arguments. Read-only bypasses and unattended contexts skip this risk request, not all plugin requests.
 - **Coding verification:** current user message, intent, changed file paths, the proposed final response, and bounded verification observations. Observations can include a command, exit-status interpretation, and an excerpt of test output.
 
 The plugin does not send the full conversation history or its cache's session/turn/tool-call IDs as explicit fields. Those identifiers, personal information, or other private content may still appear inside supplied text. It does not independently open repository files, but tool arguments and output can contain their contents. The API key is sent for authentication, not as decision-state data. The remote service also sees ordinary request metadata, including the connecting IP address.
@@ -20,7 +20,7 @@ Before truncation, the sanitizer removes the configured API key, known secret va
 
 Environment-value matching covers values of at least six characters. Pattern matching is best effort: unknown formats, encoded secrets, natural-language personal details, and credentials embedded in arbitrary content can survive. Do not use this plugin for data that may not leave the machine.
 
-`state_max_bytes` defaults to 8,000 bytes with a 16,000-byte maximum. Additional limits bound nesting, field counts, and strings. These limits reduce data volume, not sensitivity.
+`state_max_bytes` defaults to 8,000 bytes with a 16,000-byte maximum. Additional limits bound nesting, field counts, and strings. These limits reduce data volume, not sensitivity. Decision requests include completeness/truncation flags, bounded fixed-schema or positional field paths, and original/processed string lengths when available. Redaction also marks input incomplete. Metadata shares the same byte budget; repeated sanitization cannot restore completeness.
 
 ## Local state and logs
 
@@ -35,6 +35,10 @@ Human approval prompts contain a bounded, sanitized action summary. Hermes or a 
 TypeSafe's [privacy policy](https://typesafe.ai/privacy-policy) states that input is not used to train or fine-tune models. It also describes U.S. hosting, service-provider access, and retention for as long as reasonably necessary; this is **not a zero-retention promise**. Its [customer agreement](https://typesafe.ai/legal/mca) and [data processing addendum](https://typesafe.ai/legal/data-processing) describe additional contractual terms.
 
 These are provider statements, not guarantees made or independently verified by this project. Review the current documents and your account's agreement before sending personal, regulated, or confidential data. This plugin does not establish GDPR compliance, a data-processing agreement, or a right to upload someone else's data.
+
+## Shadow mode is not offline
+
+The default `mode: shadow` prevents tool shaping, approval/block proposals, and verification continuations from changing Hermes behavior. Enabled eligible stages still send decision requests, use worker slots, and produce metadata-only telemetry. Disable the plugin to stop those requests; shadow mode is not a privacy boundary. Verification and shaping are off by default.
 
 ## Disable remote decisions
 
