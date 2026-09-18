@@ -8,9 +8,17 @@ from test_sdk import engine_and_wire
 from jev_router.decisions import CompletionDecision
 
 
-@pytest.mark.parametrize("mode,expected", [("shadow", None), ("enforce", "block")])
-def test_arguments_too_large_to_bind_never_get_approval(mode, expected):
-    r = enforcing(mode=mode)
+@pytest.mark.parametrize(
+    "mode,block,expected",
+    [
+        ("shadow", False, None),
+        ("shadow", True, None),
+        ("enforce", False, None),
+        ("enforce", True, "block"),
+    ],
+)
+def test_arguments_too_large_to_bind_never_get_approval(mode, block, expected):
+    r = enforcing(mode=mode, block_unbindable=block)
     start(r)
     call = dict(
         session_id="s",
@@ -49,7 +57,7 @@ def test_truncated_evidence_cannot_trigger_verification_nudge():
         turn_id="t",
         tool_name="terminal",
         args={"command": "pytest"},
-        result={"exit_code": 1, "output": "x" * 1000},
+        result={"exit_code": 1, "output": "x" * 2000},
     )
     assert (
         r.pre_verify(session_id="s", turn_id="t", changed_paths=["a.py"], final_response="done")

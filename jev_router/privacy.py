@@ -100,7 +100,21 @@ class Sanitizer:
                     {"field": path, "original_chars": original, "processed_chars": processed}
                 )
 
+        # Bound aggregate preprocessing, not merely depth and each container.
+        # Keys count too: nested 32-way input otherwise multiplies the work.
+        budget = {"nodes": 512, "chars": 131072}
+
+        def consume(path, chars=0):
+            if budget["nodes"] <= 0 or chars > budget["chars"]:
+                lost(path)
+                return False
+            budget["nodes"] -= 1
+            budget["chars"] -= chars
+            return True
+
         def walk(item, path="state", depth=0):
+            if not consume(path, len(item) if isinstance(item, str) else 0):
+                return "[work limit]"
             if depth > 5:
                 lost(path)
                 return "[depth limit]"
@@ -132,6 +146,8 @@ class Sanitizer:
                     if not isinstance(key, str):
                         lost(child)
                         continue
+                    if not consume(child, len(key)):
+                        break
                     clean_key = self.text(key, 80, _secrets=secrets)
                     if clean_key != key or clean_key in out:
                         lost(child)
@@ -185,43 +201,11 @@ class Sanitizer:
         return dict(data, input_metadata=meta)
 
     def clean(self, value):
-        secrets = self._known_secrets()
-
-        def walk(item, depth=0):
-            if depth > 5:
-                return "[depth limit]"
-            if isinstance(item, str):
-                return self.text(item, _secrets=secrets)
-            if item is None or type(item) in (bool, int):
-                return item
-            if type(item) is float:
-                import math
-
-                return item if math.isfinite(item) else None
-            if type(item) is dict:
-                out = {}
-                for key, val in islice(item.items(), 32):
-                    if not isinstance(key, str):
-                        continue
-                    out[self.text(key, 80, _secrets=secrets)] = (
-                        "[REDACTED]" if SECRET_FIELD.search(key) else walk(val, depth + 1)
-                    )
-                return out
-            if type(item) in (list, tuple):
-                return [walk(v, depth + 1) for v in item[:16]]
-            return "[unsupported]"
-
-        result = walk(value)
-        # Preserve valid JSON and semantic field boundaries. Omit, don't cut JSON.
-        while len(json.dumps(result, ensure_ascii=False).encode()) > self.max_bytes:
-            if isinstance(result, dict) and result:
-                biggest = max(
-                    result, key=lambda k: len(json.dumps(result[k], ensure_ascii=False).encode())
-                )
-                if result[biggest] == "[size limit]":
-                    result.pop(biggest)
-                else:
-                    result[biggest] = "[size limit]"
-            else:
-                return {"omitted": "state exceeded byte limit"}
-        return result
+        """Summary-only view of the same bounded sanitizer, without metadata."""
+        data = self.prepare(value)
+        data.pop("input_metadata", None)
+        return (
+            data
+            if isinstance(value, dict)
+            else data.get("value", {"omitted": "state exceeded byte limit"})
+        )

@@ -16,6 +16,7 @@ plugins:
           enabled: true
         risk_gate:
           enabled: true
+          block_unbindable: false
           approval_threshold: 0.80
         verify:
           enabled: false

@@ -2,12 +2,17 @@
 
 ## Unreleased
 
+- Bound aggregate sanitization work, discard completion decisions after lifecycle end, and preserve tools on an explicit resumed-turn signal.
+- Narrow the follow-up approval guard so ordinary imperatives containing “this” or “it” do not force approval; retain conservative treatment of standalone references.
+- Expand verification output excerpts to 1,800 characters without allowing incomplete evidence to trigger a nudge.
+- Add seeded multi-turn/privacy probes, parallel single-use approval tests, worker-capacity recovery, and pinned host turn-context contracts.
+
 - Avoid quadratic assignment-redaction scans on long input; guard maximum-sized fields with a subprocess-deadline regression.
 
 - Default to shadow mode; keep tool shaping and verification opt-in, with staged rollout guidance. Existing configs must explicitly select `mode: enforce` to retain intervention.
 - Preserve tools for follow-ups, prior/ongoing workflows, unknown provider history, and incomplete decision input; limit shaping to verified fresh greetings.
 - Carry bounded truncation/redaction metadata through the SDK; require human review for incomplete risk inputs and suppress incomplete verification nudges.
-- Deny attended enforce-mode actions that cannot be bound to an exact argument digest. Use non-reusable approval rules for incomplete/ambiguous inputs; never grant execution permission.
+- Make denial of unbindable tool arguments an explicit `risk_gate.block_unbindable` opt-in; otherwise preserve native Hermes behavior. Use non-reusable approval rules for incomplete/ambiguous inputs; never grant execution permission.
 - Add mandatory pinned-Hermes integration CI with a no-skips gate and offline disabled/shadow/risk-only/enforce regression metrics.
 
 - Declare hooks and middleware for current Hermes catalog validation; check declarations against plugin registration.

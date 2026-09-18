@@ -98,6 +98,7 @@ class Router:
         user_message="",
         platform="",
         model="",
+        is_first_turn=None,
         **kwargs,
     ):
         if not self.active or not isinstance(session_id, str) or not session_id:
@@ -106,7 +107,12 @@ class Router:
         # a turn-local ID, never key decisions only by text or session ID.
         turn_id = turn_id if isinstance(turn_id, str) and turn_id else "local-" + uuid4().hex
         state = self.privacy.prepare(
-            {"user_message": user_message, "platform": platform, "model": model}
+            {
+                "user_message": user_message,
+                "platform": platform,
+                "model": model,
+                "host_first_turn": is_first_turn if isinstance(is_first_turn, bool) else None,
+            }
         )
         entry, owner = self.cache.reserve(
             session_id,
@@ -193,7 +199,11 @@ class Router:
             self.telemetry.record(
                 "risk_result", mode=self.config.mode, risk="unbound_input", fallback=True
             )
-            if self.config.mode == "enforce" and not entry.completed:
+            if (
+                self.config.mode == "enforce"
+                and self.config.block_unbindable
+                and not entry.completed
+            ):
                 self.prepared.put(
                     key,
                     None,
@@ -360,7 +370,7 @@ class Router:
                         "summary": result.get("output", ""),
                         "generation": entry.generation,
                     },
-                    text_limit=240,
+                    text_limit=1800,
                 )
                 entry.evidence.append(observation)
             elif tool_name in MUTATIONS or tool_name not in self.config.read_only_tools:
@@ -414,6 +424,8 @@ class Router:
         decision = self._call(
             "completion", self.engine.assess_completion, state, CompletionDecision
         )
+        if self.cache.get(session_id, turn_id) is not entry or entry.completed:
+            return None
         if decision is None:
             return None
         threshold = self.config.continue_threshold

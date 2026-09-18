@@ -28,13 +28,32 @@ def ambiguous_followup(text):
     """Known references have no standalone action scope; false positives ask a human."""
     if not isinstance(text, str) or not text.strip():
         return True
-    normalized = re.sub(r"[.!?,]+", " ", text.strip().lower())
+    normalized = " ".join(re.sub(r"[.!?,]+", " ", text.lower()).split())
     return bool(
-        re.search(
-            r"\b(?:yes|yep|yeah|ok|okay|continue|proceed|resume|it|that|this|those|them|too|again|"
-            r"ja|weiter|weitermachen|das|dies|nochmal|ebenso)\b",
+        re.match(
+            r"^(?:yes|yep|yeah|ok|okay|continue|proceed|resume|ja|weiter|weitermachen)\b",
             normalized,
         )
+        or re.fullmatch(
+            r"(?:(?:please|bitte)\s+)?(?:do|fix|run|change|delete|mach|ändere|lösche)"
+            r"\s+(?:it|that|this|them|das|dies)",
+            normalized,
+        )
+        or re.fullmatch(r"(?:run|do) (?:the )?(?:tests?|checks?) (?:too|again)", normalized)
+        or normalized
+        in {
+            "it",
+            "that",
+            "this",
+            "those",
+            "them",
+            "again",
+            "too",
+            "das",
+            "dies",
+            "nochmal",
+            "ebenso",
+        }
     )
 
 

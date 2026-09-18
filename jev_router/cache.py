@@ -54,7 +54,7 @@ class TurnCache:
             state = dict(
                 state,
                 conversation={
-                    "prior_turn_seen": bool(prior),
+                    "prior_turn_seen": bool(prior) or state.get("host_first_turn") is False,
                     "unresolved_task": any(not v.completed for v in prior),
                     "ongoing_tool_workflow": any(v.tools_started for v in prior),
                 },

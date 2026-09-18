@@ -8,7 +8,7 @@ The plugin uses the official `typesafe-sdk`. Its default endpoint is `https://ap
 
 Each request includes a Jev model ID, fixed decision questions, and a bounded state object:
 
-- **Turn classification:** current user message, platform name, Hermes agent-model identifier, and boolean summaries of cached prior turns, unresolved turns, and observed tool workflows. Full history is inspected only by the local shaping guard, not sent to Jev.
+- **Turn classification:** current user message, platform name, Hermes agent-model identifier, and boolean summaries of cached prior turns, unresolved turns, observed tool workflows, and the host first-turn signal when available. Full history is inspected only by the local shaping guard, not sent to Jev.
 - **Tool-risk assessment:** current user message, tool name, selected tool arguments, platform, classified intent, and a boolean ambiguous-follow-up flag. Shell commands, API payloads, filenames, or code can occur inside those arguments. Read-only bypasses and unattended contexts skip this risk request, not all plugin requests.
 - **Coding verification:** current user message, intent, changed file paths, the proposed final response, and bounded verification observations. Observations can include a command, exit-status interpretation, and an excerpt of test output.
 
@@ -20,7 +20,7 @@ Before truncation, the sanitizer removes the configured API key, known secret va
 
 Environment-value matching covers values of at least six characters. Pattern matching is best effort: unknown formats, encoded secrets, natural-language personal details, and credentials embedded in arbitrary content can survive. Do not use this plugin for data that may not leave the machine.
 
-`state_max_bytes` defaults to 8,000 bytes with a 16,000-byte maximum. Additional limits bound nesting, field counts, and strings. These limits reduce data volume, not sensitivity. Decision requests include completeness/truncation flags, bounded fixed-schema or positional field paths, and original/processed string lengths when available. Redaction also marks input incomplete. Metadata shares the same byte budget; repeated sanitization cannot restore completeness.
+`state_max_bytes` defaults to 8,000 bytes with a 16,000-byte maximum. Additional limits bound nesting, field counts, and strings. Each sanitization visits at most 512 values/keys and scans at most 131,072 input string characters; exceeding either budget marks the state incomplete. Both decision input and approval summaries use these aggregate bounds. These limits reduce data volume, not sensitivity. Decision requests include completeness/truncation flags, bounded fixed-schema or positional field paths, and original/processed string lengths when available. Redaction also marks input incomplete. Metadata shares the same byte budget; repeated sanitization cannot restore completeness.
 
 ## Local state and logs
 

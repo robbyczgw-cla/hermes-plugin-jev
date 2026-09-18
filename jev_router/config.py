@@ -28,6 +28,7 @@ class Config:
     shaping_enabled: bool = False
     min_confidence: float = 0.95
     risk_enabled: bool = True
+    block_unbindable: bool = False
     approval_threshold: float = 0.8
     verify_enabled: bool = False
     continue_threshold: float = 0.85
@@ -50,6 +51,7 @@ class Config:
             "classifier_enabled",
             "shaping_enabled",
             "risk_enabled",
+            "block_unbindable",
             "verify_enabled",
             "telemetry_enabled",
         ):
@@ -102,6 +104,7 @@ class Config:
             "shaping_enabled": "tool_shaping.enabled",
             "min_confidence": "tool_shaping.min_confidence",
             "risk_enabled": "risk_gate.enabled",
+            "block_unbindable": "risk_gate.block_unbindable",
             "approval_threshold": "risk_gate.approval_threshold",
             "read_only_tools": "risk_gate.read_only_tools",
             "verify_enabled": "verify.enabled",
