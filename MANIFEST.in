@@ -4,4 +4,7 @@ include requirements.txt
 include LICENSE
 include SECURITY.md
 include CONTRIBUTING.md
+include PRIVACY.md
+include THIRD_PARTY.md
+include CHANGELOG.md
 recursive-include tests *.py

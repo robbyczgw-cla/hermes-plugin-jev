@@ -25,6 +25,9 @@ jev-router = "jev_router.cli:main"
 [tool.setuptools.packages.find]
 include = ["jev_router*"]
 
+[tool.setuptools.data-files]
+"share/doc/hermes-plugin-jev" = ["PRIVACY.md", "THIRD_PARTY.md", "SECURITY.md", "CHANGELOG.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -26,13 +26,20 @@ class Sanitizer:
             v for k, v in os.environ.items() if SECRET_FIELD.search(k) and len(v) >= 6
         ) + tuple(v for v in extra_secrets if isinstance(v, str) and v)
 
-    def text(self, text, limit=1800):
+    def _known_secrets(self):
+        # Refresh without retaining an unbounded history of rotated values.
+        current = (
+            v for k, v in os.environ.copy().items() if SECRET_FIELD.search(k) and len(v) >= 6
+        )
+        return tuple(sorted(set(self.secrets).union(current), key=len, reverse=True))
+
+    def text(self, text, limit=1800, *, _secrets=None):
         if not isinstance(text, str):
             return "[unsupported]"
         # Reject oversized fields rather than clipping through an unredacted secret.
         if len(text) > 65536:
             return "[oversized field omitted]"
-        for secret in self.secrets:
+        for secret in self._known_secrets() if _secrets is None else _secrets:
             text = text.replace(secret, "[REDACTED]")
         text = PEM.sub("[PRIVATE KEY REDACTED]", text)
         text = KEY_TOKEN.sub("[REDACTED]", text)
@@ -42,11 +49,13 @@ class Sanitizer:
         return text[:limit]
 
     def clean(self, value):
+        secrets = self._known_secrets()
+
         def walk(item, depth=0):
             if depth > 5:
                 return "[depth limit]"
             if isinstance(item, str):
-                return self.text(item)
+                return self.text(item, _secrets=secrets)
             if item is None or type(item) in (bool, int):
                 return item
             if type(item) is float:
@@ -58,7 +67,7 @@ class Sanitizer:
                 for key, val in islice(item.items(), 32):
                     if not isinstance(key, str):
                         continue
-                    out[self.text(key, 80)] = (
+                    out[self.text(key, 80, _secrets=secrets)] = (
                         "[REDACTED]" if SECRET_FIELD.search(key) else walk(val, depth + 1)
                     )
                 return out

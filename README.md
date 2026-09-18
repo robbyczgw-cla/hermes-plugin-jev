@@ -4,6 +4,8 @@ Use Jev, TypeSafe AI's System One model, for small structured decisions around H
 
 This plugin classifies each user turn, conservatively narrows tool definitions, adds semantic approval requests, and checks coding completion claims against bounded verification evidence. It does **not** route providers or replace the agent model.
 
+**Before enabling:** this plugin sends selected task text to TypeSafe's hosted API. Read [Privacy and data flow](PRIVACY.md). Plugin code is [MIT-licensed](LICENSE); [SDK licenses and hosted-service terms](THIRD_PARTY.md) are separate.
+
 ## Architecture
 
 ```text
@@ -141,7 +143,7 @@ Four Noul questions assess the completion claim, verification evidence, inconsis
 
 Missing credentials/SDK, SDK exceptions, malformed responses, insufficient confidence, timeouts, exhausted worker capacity, unknown payloads, and plugin hook errors leave normal Hermes behavior in place. Existing deterministic blocks remain unchanged. SDK retries are disabled. Daemon workers enforce a caller deadline and have no unbounded queue; a timed-out network request may continue in its worker until transport timeout, but cannot apply a late decision.
 
-Enabling this plugin sends bounded user/task text and selected tool arguments to TypeSafe's hosted API. Consider your data policy before enabling it. The sanitizer removes the configured key, obvious credential fields, bearer/basic credentials, credential-shaped strings, private keys, and URL credentials **before** truncation. It limits depth, fields, string length, and total serialized bytes. Sanitization is best-effort secret minimization, **not** a DLP guarantee; private facts may remain. Disable the plugin for data that must not leave the machine.
+Enabling this plugin sends bounded user/task text and selected tool arguments to TypeSafe's hosted API. Consider your data policy before enabling it. The sanitizer removes the configured key, obvious credential fields, bearer/basic credentials, credential-shaped strings, private keys, and URL credentials **before** truncation. It limits depth, fields, string length, and total serialized bytes. Known environment secrets are refreshed for each sanitization, including credentials set after startup. See [PRIVACY.md](PRIVACY.md) for exact data fields, retention limits, and endpoint overrides. Sanitization is best-effort secret minimization, **not** a DLP guarantee; private facts may remain. Disable the plugin for data that must not leave the machine.
 
 SDK wire logs are suppressed only in this plugin's request context, even with SDK DEBUG logging enabled. Telemetry never contains conversations, tool output, arguments, secret values, or exception messages. Logs expose only bounded decision metadata, fallback categories, latency, model ID, and token usage.
 
@@ -186,7 +188,7 @@ python -m jev_router.demo
 RUN_JEV_LIVE=1 python -m pytest tests/test_live.py -s
 ```
 
-The demo automatically skips without a key. It classifies four public examples, evaluates a hypothetical build-directory deletion, and assesses a clearly labelled synthetic failed-test scenario. It prints decisions and measured latency. **It never executes the hypothetical commands.** Actual API calls may incur charges. This is a smoke test, not a routing-quality or cost-effectiveness benchmark.
+The demo automatically skips without a key. It classifies four public examples, evaluates a hypothetical build-directory deletion, and assesses a clearly labelled synthetic failed-test scenario. It prints decisions and measured latency. **It never executes the hypothetical commands.** Actual API calls may incur charges. This is a smoke test, not a routing-quality or cost-effectiveness benchmark. Keep live output private; check the [provider terms](THIRD_PARTY.md) before publishing service performance information.
 
 ## Limits and next steps
 
@@ -199,4 +201,4 @@ The demo automatically skips without a key. It classifies four public examples, 
 - A TTL-bounded cache guarantees reuse while an entry is retained, not forever across process restarts or expiration.
 - `DecisionEngine` is a small protocol. An adapter benchmark can implement it without changing hooks; `system-one-adapter-python` is not a runtime dependency.
 
-The next useful work is a blinded Jev-versus-adapter benchmark, better evidence collection for silent failures, and delegation recommendations. Same-provider model routing remains out of V0.
+Next steps include better evidence collection for silent failures, offline adapter contract tests, and delegation recommendations. Hosted-service benchmarks require a review of the applicable [provider terms](THIRD_PARTY.md). Same-provider model routing remains out of V0.
