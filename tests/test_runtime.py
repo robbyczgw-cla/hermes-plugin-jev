@@ -52,7 +52,9 @@ class Engine:
 
 def setup(engine=None, **config):
     engine = engine or Engine()
-    r = Router(Config(**config), engine=engine, approval_order_safe=lambda: True)
+    options = dict(mode="enforce", shaping_enabled=True, verify_enabled=True)
+    options.update(config)
+    r = Router(Config(**options), engine=engine, approval_order_safe=lambda: True)
     r.approval_available = lambda: True
     return r, engine
 
@@ -70,7 +72,7 @@ def risk_call(r, **kwargs):
 def tools():
     return {
         "model": "test",
-        "messages": [],
+        "messages": [{"role": "user", "content": "hello"}],
         "tools": [
             {"type": "function", "function": {"name": n, "parameters": {"type": "object"}}}
             for n in ("terminal", "read_file", "web_search", "clarify", "todo", "mystery_tool")

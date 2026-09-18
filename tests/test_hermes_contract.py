@@ -49,7 +49,9 @@ def loaded(tmp_path, monkeypatch):
                         "jev-router": {
                             "settings": {
                                 "timeout_seconds": 0.3,
-                                "tool_shaping": {"min_confidence": 0.98},
+                                "mode": "enforce",
+                                "verify": {"enabled": True},
+                                "tool_shaping": {"enabled": True, "min_confidence": 0.98},
                             }
                         }
                     },
@@ -127,7 +129,7 @@ def test_real_middleware_first_call_and_trace(loaded):
     manager, runtime = loaded
     request = {
         "model": "test",
-        "messages": [],
+        "messages": [{"role": "user", "content": "hello"}],
         "tools": [
             {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
             for name in ("terminal", "read_file", "clarify", "todo")

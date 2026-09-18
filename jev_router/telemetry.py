@@ -8,6 +8,13 @@ log = logging.getLogger("hermes.plugins.jev_router")
 ALLOWED = frozenset(
     {
         "kind",
+        "mode",
+        "would_shape",
+        "would_approve",
+        "would_nudge",
+        "input_complete",
+        "truncated",
+        "reason",
         "latency_ms",
         "confidence",
         "intent",

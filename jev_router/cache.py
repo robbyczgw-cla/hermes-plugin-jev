@@ -43,6 +43,7 @@ class TurnCache:
             if key in self._items:
                 return self._items[key], False
             # Do not evict active/in-flight turns to make room: avoid duplicate calls.
+            prior = [v for v in self._items.values() if v.session_id == session]
             if len(self._items) >= self.size:
                 finished = next(
                     (k for k, v in self._items.items() if v.completed and v.ready.is_set()), None
@@ -50,6 +51,14 @@ class TurnCache:
                 if finished is None:
                     return None, False
                 del self._items[finished]
+            state = dict(
+                state,
+                conversation={
+                    "prior_turn_seen": bool(prior),
+                    "unresolved_task": any(not v.completed for v in prior),
+                    "ongoing_tool_workflow": any(v.tools_started for v in prior),
+                },
+            )
             entry = Turn(session, turn, state, time.monotonic())
             self._items[key] = entry
             return entry, True

@@ -94,7 +94,7 @@ class TypeSafeEngine:
                 api_key=self._key, timeout=self.config.timeout_seconds, retry=self._retry
             ) as client:
                 response = client.system_one(
-                    model=self.config.model, state=self.privacy.clean(state), questions=questions
+                    model=self.config.model, state=self.privacy.prepare(state), questions=questions
                 )
                 if self.telemetry is not None:
                     self.telemetry.record(

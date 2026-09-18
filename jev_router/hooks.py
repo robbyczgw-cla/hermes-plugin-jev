@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .approval import PreparedApprovals, action_digest, human_approval_available
 from .cache import TurnCache
+from .context import ambiguous_followup, shaping_guard
 from .decisions import CompletionDecision, RiskDecision, TurnDecision
 from .middleware import shape_tools
 from .privacy import Sanitizer
@@ -58,7 +59,7 @@ class Router:
         started = time.monotonic()
         try:
             value = self.runner.run(
-                lambda: method(self.privacy.clean(state)), self.config.timeout_seconds
+                lambda: method(self.privacy.prepare(state)), self.config.timeout_seconds
             )
             if not isinstance(value, expected):
                 raise ValueError("Unexpected decision type")
@@ -72,6 +73,9 @@ class Router:
                 kind,
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
                 confidence=value.confidence,
+                mode=self.config.mode,
+                input_complete=state.get("input_metadata", {}).get("input_complete", False),
+                truncated=state.get("input_metadata", {}).get("truncated", True),
                 **({"intent": value.intent} if isinstance(value, TurnDecision) else {}),
             )
             return value
@@ -101,15 +105,13 @@ class Router:
         # Modern Hermes supplies turn_id. Legacy hooks run once per turn: create
         # a turn-local ID, never key decisions only by text or session ID.
         turn_id = turn_id if isinstance(turn_id, str) and turn_id else "local-" + uuid4().hex
-        user = self.privacy.text(user_message, 4000)
+        state = self.privacy.prepare(
+            {"user_message": user_message, "platform": platform, "model": model}
+        )
         entry, owner = self.cache.reserve(
             session_id,
             turn_id,
-            {
-                "user_message": user,
-                "platform": self.privacy.text(platform, 80),
-                "model": self.privacy.text(model, 120),
-            },
+            state,
         )
         if entry is None:
             return
@@ -117,15 +119,12 @@ class Router:
             entry.ready.wait(self.config.timeout_seconds)
             return
         try:
+            entry.state = self.privacy.prepare(entry.state)
             if self.config.classifier_enabled:
                 entry.decision = self._call(
                     "turn",
                     self.engine.classify_turn,
-                    {
-                        "user_message": user,
-                        "platform": entry.state["platform"],
-                        "model": entry.state["model"],
-                    },
+                    entry.state,
                     TurnDecision,
                 )
         finally:
@@ -144,20 +143,28 @@ class Router:
                 if entry and entry.ready.is_set() and not entry.tools_started
                 else None
             )
-        changed = shape_tools(request, decision, self.config.min_confidence)
+        eligible, reason = shaping_guard(request, entry.state if entry else {})
+        changed = shape_tools(request, decision, self.config.min_confidence) if eligible else None
         if changed is not None:
             self.telemetry.record(
                 "shaping",
-                shaped=True,
+                shaped=self.config.mode == "enforce",
+                would_shape=True,
+                mode=self.config.mode,
+                reason=reason,
                 tools_before=len(request["tools"]),
                 tools_after=len(changed["tools"]),
             )
+            if self.config.mode == "shadow":
+                return None
             return {
                 "request": changed,
                 "source": "jev-router",
                 "reason": "high-confidence simple chat; first provider request only",
             }
-        self.telemetry.record("shaping", shaped=False)
+        self.telemetry.record(
+            "shaping", shaped=False, would_shape=False, mode=self.config.mode, reason=reason
+        )
         return None
 
     @guarded
@@ -183,16 +190,33 @@ class Router:
             return None
         digest = action_digest(args)
         if digest is None:
+            self.telemetry.record(
+                "risk_result", mode=self.config.mode, risk="unbound_input", fallback=True
+            )
+            if self.config.mode == "enforce" and not entry.completed:
+                self.prepared.put(
+                    key,
+                    None,
+                    {
+                        "action": "block",
+                        "message": "Jev cannot bind these incomplete or oversized arguments to an exact approval. Reduce the action scope and retry.",
+                    },
+                )
             return None
+        ambiguous = ambiguous_followup(entry.state.get("user_message"))
         state = {
-            "user_message": entry.state["user_message"],
+            "context_ambiguous": ambiguous,
+            "input_metadata": entry.state.get("input_metadata", {"input_complete": False}),
+            "user_message": entry.state.get("user_message", ""),
             "tool_name": tool_name,
             "arguments": args,
-            "platform": entry.state["platform"],
+            "platform": entry.state.get("platform", ""),
             "turn_intent": entry.decision.intent if entry.decision else "unknown",
         }
+        state = self.privacy.prepare(state)
+        incomplete = state["input_metadata"]["input_complete"] is not True
         risk = self._call("risk", self.engine.assess_tool_risk, state, RiskDecision)
-        if risk is None:
+        if risk is None and not incomplete and not ambiguous:
             return None
         triggers = [
             name
@@ -203,22 +227,30 @@ class Router:
                 "exposes_secrets",
                 "confirmation_expected",
             )
-            if getattr(risk, name) >= self.config.approval_threshold
+            if risk is not None and getattr(risk, name) >= self.config.approval_threshold
         ]
-        if risk.confidence < 0.65:
+        if incomplete:
+            triggers.append("incomplete_input")
+        if ambiguous:
+            triggers.append("ambiguous_context")
+        if risk is not None and risk.confidence < 0.65:
             triggers.append("uncertain")
-        if risk.action_requested < 1 - self.config.approval_threshold:
+        if risk is not None and risk.action_requested < 1 - self.config.approval_threshold:
             triggers.append("action_not_requested")
         safe = bool(self.approval_order_safe()) if triggers else True
         self.telemetry.record(
             "risk_result",
             risk="approval" if triggers else "low",
-            approval=bool(triggers) and safe,
+            approval=bool(triggers) and safe and self.config.mode == "enforce",
+            would_approve=bool(triggers),
+            mode=self.config.mode,
+            input_complete=not incomplete,
             fallback=bool(triggers) and not safe,
         )
         # A session/turn may have ended while the bounded network request ran.
         if (
             triggers
+            and self.config.mode == "enforce"
             and safe
             and self.cache.get(session_id, turn_id) is entry
             and not entry.completed
@@ -226,6 +258,16 @@ class Router:
             clean_args = self.privacy.clean(args)
             action = self.privacy.text(json.dumps(clean_args, ensure_ascii=False), 320)
             labels = ", ".join(triggers)
+            # Incomplete inputs can share the same sanitized excerpt. Never
+            # let a remembered approval for one such excerpt cover another call.
+            one_off = incomplete or ambiguous
+            rule_scope = uuid4().hex if one_off else action_digest(clean_args)[:24]
+            caution = (
+                "Decision input is incomplete or ambiguous. Inspect the full original call in Hermes; "
+                "if it is unavailable, deny and reduce the scope. This is a one-off request; do not use Always. "
+                if one_off
+                else ""
+            )
             self.prepared.put(
                 key,
                 digest,
@@ -233,10 +275,11 @@ class Router:
                     "action": "approve",
                     "rule_key": (
                         f"jev:{action_digest({'tool': tool_name})[:16]}:"
-                        f"{'+'.join(triggers)}:{action_digest(clean_args)[:24]}"
+                        f"{'+'.join(triggers)}:{rule_scope}"
                     ),
                     "message": f"Jev signal ({labels}) for {self.privacy.text(tool_name, 80)}: {action}. "
-                    "Confirm this action; existing Hermes policies still apply.",
+                    + caution
+                    + "Confirm this action; existing Hermes policies still apply.",
                 },
             )
         return None
@@ -246,14 +289,15 @@ class Router:
     ):
         """Consume a prepared proposal; no network, waits, or logging in this hook."""
         try:
-            if not self.active or not self.config.risk_enabled:
+            if not self.active or not self.config.risk_enabled or self.config.mode != "enforce":
                 return None
             key = self.prepared.key(session_id, turn_id, tool_call_id, tool_name)
             if key is None:
                 return None
             directive = self.prepared.take(key, action_digest(args))
-            if directive and self.approval_available() and self.approval_order_safe():
-                return directive
+            if directive and self.approval_available():
+                if directive.get("action") == "block" or self.approval_order_safe():
+                    return directive
         except Exception:
             # Even logging can wait on an unrelated handler in a policy hook.
             pass
@@ -308,15 +352,17 @@ class Router:
                     success = None
                 if result.get("error") or status not in (None, "ok"):
                     success = False
-                entry.evidence.append(
+                observation = self.privacy.prepare(
                     {
                         "tool": "terminal",
-                        "command": self.privacy.text(command, 240),
+                        "command": command,
                         "success": success,
-                        "summary": self.privacy.text(result.get("output", ""), 400),
+                        "summary": result.get("output", ""),
                         "generation": entry.generation,
-                    }
+                    },
+                    text_limit=240,
                 )
+                entry.evidence.append(observation)
             elif tool_name in MUTATIONS or tool_name not in self.config.read_only_tools:
                 entry.generation += 1
                 entry.evidence.clear()
@@ -354,13 +400,17 @@ class Router:
                 observation["observed_success"] = True
                 observation["success"] = None
         state = {
-            "user_message": entry.state["user_message"],
+            "input_metadata": entry.state.get("input_metadata", {"input_complete": False}),
+            "user_message": entry.state.get("user_message", ""),
             "turn_intent": entry.decision.intent if entry.decision else "unknown",
             "changed_paths": changed_paths,
             "final_response": final_response,
             "verification_evidence": evidence,
             "evidence_freshness": "unverified",
         }
+        if any(e.get("input_metadata", {}).get("input_complete") is not True for e in evidence):
+            state["input_metadata"] = {"input_complete": False, "truncated": True}
+        state = self.privacy.prepare(state)
         decision = self._call(
             "completion", self.engine.assess_completion, state, CompletionDecision
         )
@@ -370,13 +420,20 @@ class Router:
         # Observer evidence cannot prove freshness; require strong model signals
         # of an inconsistent completion claim, never merely an absent test pass.
         nudge = (
-            decision.confidence >= threshold
+            state["input_metadata"]["input_complete"] is True
+            and decision.confidence >= threshold
             and decision.claims_complete >= threshold
             and decision.inconsistent >= threshold
             and decision.needs_iteration >= threshold
         )
-        self.telemetry.record("verification", nudge=nudge)
-        if nudge:
+        self.telemetry.record(
+            "verification",
+            nudge=nudge and self.config.mode == "enforce",
+            would_nudge=nudge,
+            mode=self.config.mode,
+            input_complete=state["input_metadata"]["input_complete"],
+        )
+        if nudge and self.config.mode == "enforce":
             return {
                 "action": "continue",
                 "message": "Review the completion claim against the changed files and current verification evidence. Run relevant checks or report the remaining blocker honestly; do not claim success without evidence.",
@@ -398,6 +455,7 @@ class Router:
     def status(self):
         return {
             "enabled": self.config.enabled,
+            "mode": self.config.mode,
             "active": self.active,
             "api_key_configured": self.api_key_configured,
             "turn_classifier": self.config.classifier_enabled,

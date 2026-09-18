@@ -24,11 +24,12 @@ READ_ONLY = frozenset(
 class Config:
     enabled: bool = True
     classifier_enabled: bool = True
-    shaping_enabled: bool = True
+    mode: str = "shadow"
+    shaping_enabled: bool = False
     min_confidence: float = 0.95
     risk_enabled: bool = True
     approval_threshold: float = 0.8
-    verify_enabled: bool = True
+    verify_enabled: bool = False
     continue_threshold: float = 0.85
     max_verify_nudges: int = 2
     telemetry_enabled: bool = True
@@ -42,6 +43,8 @@ class Config:
     model: str = "jev-latest"
 
     def __post_init__(self):
+        if self.mode not in ("shadow", "enforce"):
+            raise ValueError("Expected shadow or enforce mode")
         for key in (
             "enabled",
             "classifier_enabled",
@@ -94,6 +97,7 @@ class Config:
         defaults = cls()
         paths = {
             "enabled": "enabled",
+            "mode": "mode",
             "classifier_enabled": "turn_classifier.enabled",
             "shaping_enabled": "tool_shaping.enabled",
             "min_confidence": "tool_shaping.min_confidence",
