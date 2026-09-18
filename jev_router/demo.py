@@ -27,6 +27,8 @@ def main():
     runtime = Router(
         config, TypeSafeEngine(key, config), api_key=key, approval_order_safe=lambda: True
     )
+    # This standalone demo has no listener for human approval prompts.
+    runtime.approval_available = lambda: False
     failed = False
     for i, scenario in enumerate(SCENARIOS):
         ids = {"session_id": "demo", "turn_id": f"turn-{i}"}
@@ -43,10 +45,23 @@ def main():
         print(json.dumps(row))
         failed |= not bool(entry and entry.decision)
         if i == 3:
-            directive = runtime.pre_tool_call(
-                **ids, tool_name="terminal", args={"command": "rm -rf build dist"}
+            call = dict(
+                ids,
+                tool_call_id="demo-risk",
+                tool_name="terminal",
+                args={"command": "rm -rf build dist"},
             )
-            print(json.dumps({"dry_run_risk_directive": directive, "executed": False}))
+            runtime.tool_request(**call)
+            directive = runtime.pre_tool_call(**call)
+            print(
+                json.dumps(
+                    {
+                        "dry_run_risk_directive": directive,
+                        "executed": False,
+                        "approval_context": "unattended: no human approval surface",
+                    }
+                )
+            )
         runtime.post_llm_call(**ids)
     from .decisions import CompletionDecision, RiskDecision
 

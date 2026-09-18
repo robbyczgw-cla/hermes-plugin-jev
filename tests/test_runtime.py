@@ -53,11 +53,18 @@ class Engine:
 def setup(engine=None, **config):
     engine = engine or Engine()
     r = Router(Config(**config), engine=engine, approval_order_safe=lambda: True)
+    r.approval_available = lambda: True
     return r, engine
 
 
 def start(r, s="s", t="t", text="hello"):
     return r.pre_llm_call(session_id=s, turn_id=t, user_message=text, platform="test", model="test")
+
+
+def risk_call(r, **kwargs):
+    kwargs.setdefault("tool_call_id", "test-call")
+    r.tool_request(**kwargs)
+    return r.pre_tool_call(**kwargs)
 
 
 def tools():
@@ -181,12 +188,11 @@ def test_read_bypass_and_low_risk():
     r, e = setup()
     start(r)
     assert (
-        r.pre_tool_call(tool_name="read_file", args={"path": "a"}, session_id="s", turn_id="t")
-        is None
+        risk_call(r, tool_name="read_file", args={"path": "a"}, session_id="s", turn_id="t") is None
     )
     assert e.risk_calls == 0
     assert (
-        r.pre_tool_call(tool_name="terminal", args={"command": "pwd"}, session_id="s", turn_id="t")
+        risk_call(r, tool_name="terminal", args={"command": "pwd"}, session_id="s", turn_id="t")
         is None
     )
     assert e.risk_calls == 1
@@ -197,14 +203,14 @@ def test_high_risk_and_uncertainty_request_approval():
     start(r)
     e.risk = RiskDecision(0.99, 0.99, 0.99, 0.99, 0.01, 0.99)
     assert (
-        r.pre_tool_call(
-            tool_name="terminal", args={"command": "delete data"}, session_id="s", turn_id="t"
+        risk_call(
+            r, tool_name="terminal", args={"command": "delete data"}, session_id="s", turn_id="t"
         )["action"]
         == "approve"
     )
     e.risk = RiskDecision(0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
     assert (
-        r.pre_tool_call(tool_name="terminal", args={}, session_id="s", turn_id="t")["action"]
+        risk_call(r, tool_name="terminal", args={}, session_id="s", turn_id="t")["action"]
         == "approve"
     )
 
@@ -213,17 +219,17 @@ def test_risk_failure_no_directive_and_later_guard_preserved():
     r, e = setup()
     start(r)
     e.error = True
-    assert r.pre_tool_call(tool_name="terminal", args={}, session_id="s", turn_id="t") is None
+    assert risk_call(r, tool_name="terminal", args={}, session_id="s", turn_id="t") is None
     e.error = False
     e.risk = RiskDecision(0.1, 1, 1, 1, 1, 1)
     r.approval_order_safe = lambda: False
-    assert r.pre_tool_call(tool_name="terminal", args={}, session_id="s", turn_id="t") is None
+    assert risk_call(r, tool_name="terminal", args={}, session_id="s", turn_id="t") is None
 
 
 def test_action_dependent_memory_not_allowlisted():
     r, e = setup()
     start(r)
-    r.pre_tool_call(tool_name="memory", args={"action": "remove"}, session_id="s", turn_id="t")
+    risk_call(r, tool_name="memory", args={"action": "remove"}, session_id="s", turn_id="t")
     assert e.risk_calls == 1
 
 
@@ -302,7 +308,8 @@ def test_privacy_nested_text_unicode_and_never_log(monkeypatch, caplog):
     assert len(out.encode()) <= 1500
     r, e = setup()
     start(r, text=secret)
-    r.pre_tool_call(
+    risk_call(
+        r,
         tool_name="terminal",
         args={"command": f'curl -H "Authorization: Bearer {secret}"', "token": secret},
         session_id="s",

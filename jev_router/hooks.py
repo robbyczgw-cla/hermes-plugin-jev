@@ -8,6 +8,7 @@ import re
 import time
 from uuid import uuid4
 
+from .approval import PreparedApprovals, action_digest, human_approval_available
 from .cache import TurnCache
 from .decisions import CompletionDecision, RiskDecision, TurnDecision
 from .middleware import shape_tools
@@ -46,6 +47,8 @@ class Router:
             engine.telemetry = self.telemetry
         self.runner = BoundedRunner(config.max_workers)
         self.approval_order_safe = approval_order_safe or (lambda: False)
+        self.approval_available = human_approval_available
+        self.prepared = PreparedApprovals(config.cache_size)
 
     @property
     def active(self):
@@ -158,17 +161,28 @@ class Router:
         return None
 
     @guarded
-    def pre_tool_call(
-        self, *, tool_name="", args=None, session_id=None, turn_id=None, platform="", **kwargs
+    def tool_request(
+        self, *, tool_name="", args=None, session_id=None, turn_id=None, tool_call_id=None, **kwargs
     ):
+        """Prepare risk before policy dispatch, without changing tool arguments."""
         if not self.active:
             return None
+        key = self.prepared.key(session_id, turn_id, tool_call_id, tool_name)
+        if key is None:
+            return None
+        self.prepared.discard(key)
         entry = self.cache.get(session_id, turn_id)
         if not entry:
             return None
         with self.cache.lock:
             entry.tools_started = True
         if not self.config.risk_enabled or tool_name in self.config.read_only_tools:
+            return None
+        if not self.approval_available():
+            self.telemetry.record("risk_result", risk="unattended", approval=False, fallback=True)
+            return None
+        digest = action_digest(args)
+        if digest is None:
             return None
         state = {
             "user_message": entry.state["user_message"],
@@ -180,33 +194,69 @@ class Router:
         risk = self._call("risk", self.engine.assess_tool_risk, state, RiskDecision)
         if risk is None:
             return None
-        threshold = self.config.approval_threshold
-        meaningful = (
-            max(
-                risk.external_side_effect,
-                risk.destructive,
-                risk.irreversible,
-                risk.exposes_secrets,
-                risk.confirmation_expected,
+        triggers = [
+            name
+            for name in (
+                "external_side_effect",
+                "destructive",
+                "irreversible",
+                "exposes_secrets",
+                "confirmation_expected",
             )
-            >= threshold
-        )
-        uncertain = risk.confidence < 0.65 or risk.action_requested < 1 - threshold
-        needs_approval = meaningful or uncertain
-        # Hermes resolves FIRST block/approve. Only append semantic approval at
-        # the end of the current public registry, preserving earlier policies.
-        safe = bool(self.approval_order_safe()) if needs_approval else True
+            if getattr(risk, name) >= self.config.approval_threshold
+        ]
+        if risk.confidence < 0.65:
+            triggers.append("uncertain")
+        if risk.action_requested < 1 - self.config.approval_threshold:
+            triggers.append("action_not_requested")
+        safe = bool(self.approval_order_safe()) if triggers else True
         self.telemetry.record(
             "risk_result",
-            risk="approval" if needs_approval else "low",
-            approval=needs_approval and safe,
-            fallback=needs_approval and not safe,
+            risk="approval" if triggers else "low",
+            approval=bool(triggers) and safe,
+            fallback=bool(triggers) and not safe,
         )
-        if needs_approval and safe:
-            return {
-                "action": "approve",
-                "message": "TypeSafe semantic signal: this action may need human confirmation. Existing Hermes policies still apply.",
-            }
+        # A session/turn may have ended while the bounded network request ran.
+        if (
+            triggers
+            and safe
+            and self.cache.get(session_id, turn_id) is entry
+            and not entry.completed
+        ):
+            clean_args = self.privacy.clean(args)
+            action = self.privacy.text(json.dumps(clean_args, ensure_ascii=False), 320)
+            labels = ", ".join(triggers)
+            self.prepared.put(
+                key,
+                digest,
+                {
+                    "action": "approve",
+                    "rule_key": (
+                        f"jev:{action_digest({'tool': tool_name})[:16]}:"
+                        f"{'+'.join(triggers)}:{action_digest(clean_args)[:24]}"
+                    ),
+                    "message": f"Jev signal ({labels}) for {self.privacy.text(tool_name, 80)}: {action}. "
+                    "Confirm this action; existing Hermes policies still apply.",
+                },
+            )
+        return None
+
+    def pre_tool_call(
+        self, *, tool_name="", args=None, session_id=None, turn_id=None, tool_call_id=None, **kwargs
+    ):
+        """Consume a prepared proposal; no network, waits, or logging in this hook."""
+        try:
+            if not self.active or not self.config.risk_enabled:
+                return None
+            key = self.prepared.key(session_id, turn_id, tool_call_id, tool_name)
+            if key is None:
+                return None
+            directive = self.prepared.take(key, action_digest(args))
+            if directive and self.approval_available() and self.approval_order_safe():
+                return directive
+        except Exception:
+            # Even logging can wait on an unrelated handler in a policy hook.
+            pass
         return None
 
     @guarded
@@ -242,13 +292,22 @@ class Router:
         )
         # Shell control operators can hide the real test exit status (pytest;
         # true), so such commands are not accepted as positive test evidence.
-        if is_verify and any(token in command for token in (";", "||", "&&", "|", "`", "$(", "\n")):
+        if is_verify and any(token in command for token in (";", "&", "|", "`", "$(", "\n")):
+            is_verify = False
+        if is_verify and re.search(
+            r"(?:^|\s)(?:--(?:collect-only|co|version|help|list-tests|list|dry-run|fix|fix-only|write|updateSnapshot|update-snapshots)|-h|-u)(?=\s|=|$)",
+            command,
+        ):
             is_verify = False
         with self.cache.lock:
             entry.tools_started = True
             if is_verify:
                 exit_code = result.get("exit_code")
                 success = exit_code == 0 if type(exit_code) is int else None
+                if result.get("session_id") or args.get("background"):
+                    success = None
+                if result.get("error") or status not in (None, "ok"):
+                    success = False
                 entry.evidence.append(
                     {
                         "tool": "terminal",
@@ -287,12 +346,20 @@ class Router:
                 return None
             entry.verify_attempts.add(attempt)
             evidence = [dict(e) for e in entry.evidence if e["generation"] == entry.generation]
+        # Hermes may skip post_tool_call observers. An observed pass cannot
+        # establish freshness without a workspace revision supplied at both ends.
+        for observation in evidence:
+            observation["freshness"] = "unverified"
+            if observation["success"] is True:
+                observation["observed_success"] = True
+                observation["success"] = None
         state = {
             "user_message": entry.state["user_message"],
             "turn_intent": entry.decision.intent if entry.decision else "unknown",
             "changed_paths": changed_paths,
             "final_response": final_response,
             "verification_evidence": evidence,
+            "evidence_freshness": "unverified",
         }
         decision = self._call(
             "completion", self.engine.assess_completion, state, CompletionDecision
@@ -300,12 +367,10 @@ class Router:
         if decision is None:
             return None
         threshold = self.config.continue_threshold
-        has_success = any(e["success"] is True for e in evidence)
-        has_failure = any(e["success"] is False for e in evidence)
-        observed_problem = has_failure or not has_success
+        # Observer evidence cannot prove freshness; require strong model signals
+        # of an inconsistent completion claim, never merely an absent test pass.
         nudge = (
-            observed_problem
-            and decision.confidence >= threshold
+            decision.confidence >= threshold
             and decision.claims_complete >= threshold
             and decision.inconsistent >= threshold
             and decision.needs_iteration >= threshold
@@ -328,6 +393,7 @@ class Router:
     @guarded
     def on_session_end(self, *, session_id=None, **kwargs):
         self.cache.end(session_id)
+        self.prepared.end(session_id)
 
     def status(self):
         return {

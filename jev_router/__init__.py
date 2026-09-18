@@ -53,6 +53,7 @@ def register(ctx):
     ):
         ctx.register_hook(hook, getattr(runtime, hook))
     ctx.register_middleware("llm_request", runtime.llm_request)
+    ctx.register_middleware("tool_request", runtime.tool_request)
 
     def setup(parser):
         parser.add_argument("action", choices=["status"], nargs="?", default="status")

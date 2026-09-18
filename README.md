@@ -15,8 +15,8 @@ pre_llm_call → one Jev System One request (3 Choice + 5 Noul questions)
     ▼
 Bounded (session_id, turn_id) cache
     ├─ llm_request → optional first-request tool shaping
-    ├─ pre_tool_call → read-only bypass or semantic risk assessment
-    │                     └─ Hermes human approval, never permission to execute
+    ├─ tool_request → bounded risk assessment, single-use proposal cache
+    │    └─ pre_tool_call → cache only → Hermes human approval
     └─ post_tool_call → bounded verification evidence
                           └─ pre_verify → optional bounded continuation
                                       │
@@ -97,7 +97,7 @@ plugins:
 
 `risk_gate.read_only_tools` optionally replaces the default bypass list: `read_file`, `search_files`, `web_search`, `web_extract`, `web_search_plus`, `web_extract_plus`, `session_search`, `skills_list`, `skill_view`, `tool_search`, and `tool_describe`. Keep it restricted to tools whose semantics you trust. `terminal`, memory mutations, generic API tools, and browser automation are not bypassed. An empty list assesses every tool.
 
-Invalid configuration disables this plugin and logs a fixed warning. Confidence values must be finite; shaping cannot be configured below 0.95. Timeouts are limited to 0.01–10 seconds, cache entries to 4096, state to 16 KB, workers to 16, and local verification nudges to 3. Configure the plugin timeout comfortably below Hermes's hook callback timeout, whose default is 30 seconds: Hermes itself fails closed on timed-out policy hooks.
+Invalid configuration disables this plugin and logs a fixed warning. Confidence values must be finite; shaping cannot be configured below 0.95. Timeouts are limited to 0.01–10 seconds, cache entries to 4096, state to 16 KB, workers to 16, and local verification nudges to 3. Risk requests run in `tool_request` middleware, outside Hermes's fail-closed policy hook. `pre_tool_call` only reads a prepared proposal: it performs no network calls, waits for no cache lock, and emits no logs.
 
 ## Decisions
 
@@ -117,15 +117,21 @@ The pure `shape_tools` function supports OpenAI Chat Completions and Responses f
 
 ### Additive risk gate
 
-Read-only tools bypass Jev. Eligible calls ask six independent Noul questions in one request: was the action requested, does it change external state, is it destructive, is it hard to reverse, could it expose secrets, and would confirmation be expected?
+Read-only tools bypass Jev. In interactive CLI or attended gateway contexts, `tool_request` asks six independent Noul questions in one request: was the action requested, does it change external state, is it destructive, is it hard to reverse, could it expose secrets, and would confirmation be expected?
 
-Python combines those signals. Significant risk or semantic uncertainty can return an `approve` directive. This is a **request for human approval**, not an approval grant. The plugin never returns `allow`, edits tool arguments, executes a tool, or modifies Hermes's policy configuration.
+The middleware does not change arguments. It prepares a single-use proposal bound to the session, turn, tool-call ID, tool name, and full argument digest. The policy hook consumes only an exact match. Missing IDs, changed arguments, expiry (10 seconds), capacity eviction, and cache contention cause abstention. The proposal cache holds at most `cache.max_turns` proposals. No network request runs inside the policy hook; a slow Jev request cannot occupy that hook while another session needs it.
+
+Cron, single-query (`-q`), API-server/webhook sessions, and bare noninteractive scripts do not get Jev approval requests. The plugin uses Hermes's context-local approval predicates, checks again before emission, and abstains if those host APIs are unavailable. Unattended skips record metadata-only telemetry. This does not change Hermes's own cron/unattended approval settings or deterministic guards.
+
+Python combines those signals. Significant risk or semantic uncertainty can return an `approve` directive. This is a **request for human approval**, not an approval grant. The plugin never returns `allow`, edits tool arguments, executes a tool, or modifies Hermes's policy configuration. Approval messages name the risk dimensions and show a bounded, sanitized action summary. Explicit `rule_key` values separate tool, risk dimensions, and the sanitized action digest, instead of creating a tool-wide permanent allowlist entry. Redacted or truncated differences are not distinct approval rules; these keys do not replace deterministic scope checks.
 
 **Current Hermes arbitration constraint:** the first `block` or `approve` hook result wins. This plugin emits `approve` only when its hook is last in Hermes's public callback snapshot. If another hook follows it, Jev abstains rather than shadowing a later block. Earlier block hooks continue to win. Register deterministic policy hooks before this plugin when semantic approvals are wanted. This check is conservative; a later observer also disables Jev approval requests. Hermes plugin registration is expected to remain stable while a turn runs.
 
 ### Coding verification
 
-Only Hermes-provided nonempty `changed_paths` enables the check. `post_tool_call` retains at most eight short verification records: tool, sanitized command, explicit exit status, and a bounded output excerpt. Compound shell commands are not accepted as positive evidence. File edits and other terminal commands invalidate earlier evidence; background starts without an exit code are not successful tests.
+Only Hermes-provided nonempty `changed_paths` enables the check. `post_tool_call` retains at most eight short verification observations: tool, sanitized command, explicit exit status, and a bounded output excerpt. Compound/background shell commands, collection-only runs, and help/version/dry-run invocations do not count as successful verification. Observed mutations invalidate earlier records.
+
+Hermes can skip observer hooks, so a missing mutation event cannot prove that an earlier pass is still current. All retained evidence is labelled `freshness: unverified`; historical passes become `observed_success: true`, not current `success: true`. They cannot deterministically suppress a continuation. Jev still needs strong inconsistency and unfinished-work signals to nudge; unknown freshness alone does not trigger another iteration. This conservative policy can cause an extra check after genuinely successful tests.
 
 Four Noul questions assess the completion claim, verification evidence, inconsistency, and need for another iteration. Strong signals can return `continue`; absence of evidence alone is not enough. Each attempt is queried once, with both the plugin's `max_nudges` and Hermes's existing `max_verify_nudges` bounding the loop. Hermes supplies no turn ID to `pre_verify` in the tested checkout, so ambiguous overlapping turns abstain.
 
@@ -187,7 +193,9 @@ The demo automatically skips without a key. It classifies four public examples, 
 - No provider/model switching, persistent decision database, dashboard, fine-tuning, or agent replacement.
 - Initial shaping covers only simple chat and recognized function schemas. High thresholds will often preserve every tool.
 - Verification recognizes a small set of direct foreground test/lint/build commands. It cannot prove test relevance or coverage, inspect actual diffs, or follow remote/background jobs to completion.
-- Approval emission depends on safe hook ordering; changing hooks concurrently is outside the supported runtime contract.
+- Approval emission depends on safe hook ordering; changing hooks concurrently is outside the supported runtime contract. Hermes still owns its hook timeout/re-entrancy guards, including fail-closed behavior if even the cache-only policy callback is delayed by the host.
+- The approval context adapter uses Hermes's current internal predicates because the tested host has no public equivalent. Contract tests cover CLI, Telegram, cron, single-query, API-server, and webhook contexts. Unsupported versions abstain.
+- Interrupted turns may remain ambiguous for session-only verification until cache expiry; no decision is guessed across turns. SDK clients currently reconnect per request.
 - A TTL-bounded cache guarantees reuse while an entry is retained, not forever across process restarts or expiration.
 - `DecisionEngine` is a small protocol. An adapter benchmark can implement it without changing hooks; `system-one-adapter-python` is not a runtime dependency.
 

@@ -4,6 +4,7 @@ Run with HERMES_SOURCE set and the Hermes Python environment. No live TypeSafe c
 """
 
 import importlib
+import json
 import os
 import shutil
 import sys
@@ -121,14 +122,15 @@ def test_real_middleware_first_call_and_trace(loaded):
 
 
 def test_real_approval_directive_and_earlier_block(loaded):
+    from hermes_cli.middleware import apply_tool_request_middleware
     from hermes_cli.plugins import get_pre_tool_call_directive
 
     manager, runtime = loaded
+    runtime.approval_available = lambda: True
+    ids = dict(session_id="s", turn_id="t", tool_call_id="c")
+    apply_tool_request_middleware("terminal", {"command": "rm -rf build"}, skip_relay=True, **ids)
     assert (
-        get_pre_tool_call_directive(
-            "terminal", {"command": "rm -rf build"}, session_id="s", turn_id="t"
-        )[0]
-        == "approve"
+        get_pre_tool_call_directive("terminal", {"command": "rm -rf build"}, **ids)[0] == "approve"
     )
     manager._hooks["pre_tool_call"].insert(
         0, lambda **kw: {"action": "block", "message": "deterministic deny"}
@@ -140,14 +142,17 @@ def test_real_approval_directive_and_earlier_block(loaded):
 
 
 def test_later_block_cannot_be_shadowed(loaded):
+    from hermes_cli.middleware import apply_tool_request_middleware
     from hermes_cli.plugins import get_pre_tool_call_directive
 
     manager, runtime = loaded
+    runtime.approval_available = lambda: True
+    ids = dict(session_id="s", turn_id="t", tool_call_id="c")
+    apply_tool_request_middleware("terminal", {}, skip_relay=True, **ids)
     manager._hooks["pre_tool_call"].append(
         lambda **kw: {"action": "block", "message": "later deny"}
     )
-    assert runtime.pre_tool_call(tool_name="terminal", args={}, session_id="s", turn_id="t") is None
-    assert get_pre_tool_call_directive("terminal", {}, session_id="s", turn_id="t") == (
+    assert get_pre_tool_call_directive("terminal", {}, **ids) == (
         "block",
         "later deny",
     )
@@ -173,3 +178,22 @@ def test_real_verify_contract_and_end(loaded):
     assert runtime.cache.get("s") is None
     manager.invoke_hook("on_session_end", session_id="s")
     assert len(runtime.cache) == 0
+
+
+def test_official_cli_status(loaded):
+    import subprocess
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = SOURCE
+    result = subprocess.run(
+        [sys.executable, "-m", "hermes_cli.main", "jev", "status"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    status = json.loads(result.stdout)
+    assert status["enabled"] is True
+    assert status["api_key_configured"] is False
+    assert status["active"] is False

@@ -38,7 +38,7 @@ RISK_NOULS = {
 }
 COMPLETION_NOULS = {
     "claims_complete": "Does the final response claim the requested implementation is complete?",
-    "verification_evidence_present": "Does current evidence show relevant verification completed successfully after the last code change?",
+    "verification_evidence_present": "Does current evidence show relevant verification completed successfully after the last code change? Evidence labelled freshness=unverified is historical, not proof of a current pass. Unknown freshness alone does not prove failure or justify another iteration.",
     "inconsistent": "Does the completion claim conflict with the observed changed files or current verification evidence? Absence of evidence alone does not prove failure.",
     "needs_iteration": "Is there strong evidence of unfinished requested coding work that warrants another agent iteration?",
 }
