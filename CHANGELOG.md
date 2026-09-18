@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid quadratic assignment-redaction scans on long input; guard maximum-sized fields with a subprocess-deadline regression.
+
 - Default to shadow mode; keep tool shaping and verification opt-in, with staged rollout guidance. Existing configs must explicitly select `mode: enforce` to retain intervention.
 - Preserve tools for follow-ups, prior/ongoing workflows, unknown provider history, and incomplete decision input; limit shaping to verified fresh greetings.
 - Carry bounded truncation/redaction metadata through the SDK; require human review for incomplete risk inputs and suppress incomplete verification nudges.

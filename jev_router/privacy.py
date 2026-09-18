@@ -12,9 +12,10 @@ KEY_TOKEN = re.compile(
     r"\b(?:apikey_[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]+)\b"
 )
 BEARER = re.compile(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=:-]+")
-ASSIGNMENT = re.compile(
-    r"(?i)((?:[\w-]*(?:api[_-]?key|token|password|passwd|secret|authorization|cookie|credential)[\w-]*)[\"']?\s*[:=]\s*[\"']?)([^\s&\"'<>;,}]+)"
-)
+# Match a key header once, then inspect its name. A greedy prefix searching
+# for a secret keyword at every character causes quadratic time on long words.
+ASSIGNMENT = re.compile(r"(?<![\w-])([\w-]+)[\"']?\s*[:=]\s*[\"']?")
+ASSIGNMENT_VALUE = re.compile(r"[^\s&\"'<>;,}]+")
 URL_AUTH = re.compile(r"(https?://)[^/@\s]+:[^/@\s]+@", re.I)
 PEM = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)", re.S)
 
@@ -44,7 +45,17 @@ class Sanitizer:
         text = PEM.sub("[PRIVATE KEY REDACTED]", text)
         text = KEY_TOKEN.sub("[REDACTED]", text)
         text = BEARER.sub("[AUTH REDACTED]", text)
-        text = ASSIGNMENT.sub(r"\1[REDACTED]", text)
+        parts = []
+        end = 0
+        for header in ASSIGNMENT.finditer(text):
+            if header.start() < end or not SECRET_FIELD.search(header.group(1)):
+                continue
+            value = ASSIGNMENT_VALUE.match(text, header.end())
+            if value:
+                parts.extend((text[end : header.end()], "[REDACTED]"))
+                end = value.end()
+        parts.append(text[end:])
+        text = "".join(parts)
         text = URL_AUTH.sub(r"\1[REDACTED]@", text)
         return text[:limit]
 
