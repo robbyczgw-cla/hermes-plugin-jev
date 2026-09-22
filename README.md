@@ -2,7 +2,7 @@
 
 `hermes-plugin-jev` connects Hermes Agent to Jev, TypeSafe AI's System One decision model, for a small set of structured judgments about each turn. Hermes keeps planning, calling tools, running its own guardrails, and asking humans for approval. Jev only adds signals.
 
-**0.1.0 preview/beta — start in shadow mode.** Risk enforcement, verification, and tool shaping are experimental. The repository is currently private; installation requires authenticated GitHub access.
+**0.1.0 preview/beta — start in shadow mode.** Risk enforcement, verification, and tool shaping are experimental. The repository is public. `hermes plugins install` still needs the full 40-character commit SHA, not a branch name.
 
 Enabling this plugin sends bounded user text and selected tool arguments to TypeSafe's hosted API. Read [PRIVACY.md](PRIVACY.md) before you enable it. Plugin code is [MIT](LICENSE); the SDK and hosted service have [separate terms](THIRD_PARTY.md).
 
